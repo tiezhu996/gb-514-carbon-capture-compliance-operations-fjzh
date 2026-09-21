@@ -18,6 +18,15 @@ export interface DomainRecord {
   createdAt: string;
   updatedAt: string;
   revisions?: DecisionRevision[];
+  // 合规决定 → 排放样本绑定及回退链路。
+  sampleId?: number | null;
+  sampleCode?: string;
+  replacementSampleCode?: string;
+  rollbacks?: DecisionRollback[];
+  // 排放样本作废上下文。
+  invalidatedReason?: string;
+  invalidatedAt?: string | null;
+  affectedDecisions?: AffectedDecision[];
 }
 
 export interface DecisionRevision {
@@ -30,6 +39,34 @@ export interface DecisionRevision {
   actor: string;
   requestId: string;
   createdAt: string;
+}
+
+export interface DecisionRollback {
+  id: number;
+  complianceDecisionId: number;
+  chainOrder: number;
+  fromState: string;
+  invalidatedSampleId: number;
+  invalidatedSampleCode: string;
+  invalidationReason: string;
+  invalidatedAt: string;
+  rolledBackAt: string;
+  replacementSampleId?: number | null;
+  replacementSampleCode?: string;
+  resolvedAt?: string | null;
+  resolvedBy?: string;
+}
+
+export interface AffectedDecision {
+  decisionId: number;
+  code: string;
+  name: string;
+  status: string;
+  version: number;
+  rolledBackAt?: string | null;
+  rollbackReason?: string;
+  replacementSampleId?: number | null;
+  resolvedAt?: string | null;
 }
 
 export interface PageMeta { page: number; pageSize: number; total: number }

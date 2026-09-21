@@ -49,6 +49,24 @@ docker compose down -v --remove-orphans
 | review → accepted/escalated | reviewer/admin | 追加最终决定版本；operator 会被拒绝 |
 | review 后修改字段 | 无 | 返回业务规则错误，历史与证据不可覆盖 |
 
+## 样本作废与决定回退复核
+
+排放样本与合规决定通过 `sampleId` 显式关联。样本作废会在单事务内级联回退引用它的已接受（accepted）或升级（escalated）决定，形成 append-only 回退链路（`DecisionRollback`）。
+
+| 环节 | 规则 |
+|---|---|
+| 样本作废 | verified → invalid，记录作废原因与作废时间；同一事务把引用该样本（或引用其作为替代样本）的 accepted/escalated 决定回退到 review |
+| 结论与证据保留 | 回退只追加新版本与回退记录，原 accepted/escalated 结论、证据、操作者和 request ID 全部保留；回退后决定不再生效 |
+| 重复作废 | 返回业务错误 `sample already invalidated`，样本、决定、版本与审计均不改动 |
+| 回退后终审 | 仅 reviewer/admin 可执行；operator 一律拒绝。终审必须携带替代样本 |
+| 替代样本条件 | 同一装置（facility 一致）、状态为 verified、采样时间严格晚于作废时间；缺一不可 |
+| 并发终审 / 更换替代样本 | 乐观锁 + `resolved_at IS NULL` 保证只有一个终审结果，失败方不改决定、版本或审计；已解析后不可再更换替代样本 |
+| 替代样本再次作废 | 已恢复的决定再次回退，链路追加新一行（chain_order 递增），历史结论继续保留，需新的合格替代样本再次终审 |
+| 回退期间字段 | 业务字段与样本引用锁定，等待复核员替代样本终审 |
+| 页面可回读 | 决定页展示回退链路与已绑定替代样本；样本页展示受影响决定及回退/终审状态；刷新后通过普通 GET 接口可完整回读 |
+
+新增接口：`GET /api/decisions/:id/replacement-candidates` 返回符合「同装置、已验证、采样晚于作废时间」的替代样本候选。新增审计动作 `rollback`（系统代记，详情包含作废操作者、样本编码与作废原因）。原 JWT、RBAC、限流与既有状态迁移流程不变。
+
 ## 技术栈
 
 | 层次 | 技术 |

@@ -26,6 +26,10 @@ type TransitionRequest struct {
 	Status          string `json:"status" binding:"required,max=40"`
 	ExpectedVersion uint   `json:"expectedVersion" binding:"required"`
 	Reason          string `json:"reason" binding:"required,min=3,max=500"`
+	// ReplacementSampleID is only meaningful for a rolled-back 合规决定 being
+	// finalised again (review -> accepted/escalated). It carries the verified
+	// replacement 排放样本 chosen by the reviewer.
+	ReplacementSampleID uint `json:"replacementSampleId"`
 }
 
 type AuditSummaryQuery struct {

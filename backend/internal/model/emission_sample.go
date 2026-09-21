@@ -16,6 +16,14 @@ type EmissionSample struct {
 	EffectiveAt time.Time `json:"effectiveAt"`
 	Evidence    string    `json:"evidence" gorm:"size:2000"`
 	RelatedCode string    `json:"relatedCode" gorm:"size:64;index"`
+	// InvalidatedReason and InvalidatedAt are set exactly once, when the sample
+	// transitions into invalid. They stay populated even if a later workflow
+	// re-verifies the sample, so the historical invalidation context survives.
+	InvalidatedReason string     `json:"invalidatedReason" gorm:"size:500;not null;default:''"`
+	InvalidatedAt     *time.Time `json:"invalidatedAt"`
+	// AffectedDecisions is a read-model projection of compliance decisions that
+	// reference this sample, populated by the repository layer.
+	AffectedDecisions []AffectedDecision `json:"affectedDecisions" gorm:"-"`
 }
 
 func (item *EmissionSample) GetBase() *BaseModel { return &item.BaseModel }

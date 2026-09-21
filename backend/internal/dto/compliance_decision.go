@@ -17,6 +17,8 @@ type CreateComplianceDecision struct {
 	EffectiveAt time.Time `json:"effectiveAt" binding:"required"`
 	Evidence    string    `json:"evidence" binding:"max=2000"`
 	RelatedCode string    `json:"relatedCode" binding:"max=64"`
+	// SampleID optionally binds the decision to the 排放样本 supporting it.
+	SampleID *uint `json:"sampleId"`
 }
 
 type UpdateComplianceDecision struct {
@@ -32,4 +34,5 @@ type UpdateComplianceDecision struct {
 	EffectiveAt     time.Time `json:"effectiveAt" binding:"required"`
 	Evidence        string    `json:"evidence" binding:"max=2000"`
 	RelatedCode     string    `json:"relatedCode" binding:"max=64"`
+	SampleID        *uint     `json:"sampleId"`
 }

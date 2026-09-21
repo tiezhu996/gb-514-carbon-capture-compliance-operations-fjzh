@@ -19,12 +19,13 @@ func TestComplianceDecisionPreservesEveryVersionAndReviewerBoundary(t *testing.T
 	if err != nil {
 		t.Fatalf("open database: %v", err)
 	}
-	if err := db.AutoMigrate(&model.ComplianceDecision{}, &model.DecisionRevision{}, &model.AuditLog{}); err != nil {
+	if err := db.AutoMigrate(&model.ComplianceDecision{}, &model.DecisionRevision{}, &model.DecisionRollback{}, &model.EmissionSample{}, &model.AuditLog{}); err != nil {
 		t.Fatalf("migrate database: %v", err)
 	}
 	repo := repository.NewComplianceDecisionRepository(db)
 	security := NewSecurityService(repository.NewSecurityRepository(db), config.Config{})
-	svc := NewComplianceDecisionService(repo, security)
+	sampleSvc := NewEmissionSampleService(repository.NewEmissionSampleRepository(db), repo, repository.NewInvalidationRepository(db), security)
+	svc := NewComplianceDecisionService(repo, sampleSvc, security)
 	ctx := context.Background()
 	now := time.Now().UTC()
 

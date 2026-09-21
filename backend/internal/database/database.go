@@ -82,6 +82,7 @@ func migrate(db *gorm.DB) error {
 		&model.EmissionSample{},
 		&model.ComplianceDecision{},
 		&model.DecisionRevision{},
+		&model.DecisionRollback{},
 	)
 }
 
@@ -196,9 +197,23 @@ func seedEmissionSample(ctx context.Context, db *gorm.DB) error {
 			EffectiveAt: now.Add(3 * time.Hour), Evidence: "已完成基础证据核对", RelatedCode: "REL-514-02"},
 
 		{BaseModel: model.BaseModel{Code: "ES-003", Name: "排放样本示例三", Status: "verified", Version: 1,
-			Description: "用于启动验证和主要流程演示的排放样本记录"}, Facility: "碳捕集装置合规运行区域3", Owner: "安全主管组",
+			Description: "已接受决定 CD-003 引用的排放样本，作废后会触发回退"}, Facility: "碳捕集装置合规运行区域3", Owner: "安全主管组",
 			Category: "复核", RiskLevel: "high", MetricValue: 37.5, MetricUnit: "score",
 			EffectiveAt: now.Add(6 * time.Hour), Evidence: "已完成基础证据核对", RelatedCode: "REL-514-03"},
+
+		// Replacement candidate for the CD-003 rollback demo: same unit,
+		// verified and sampled in the future so it is strictly later than the
+		// invalidation time created during the workflow.
+		{BaseModel: model.BaseModel{Code: "ES-004", Name: "排放样本替代候选", Status: "verified", Version: 1,
+			Description: "同装置替代样本，采样晚于作废时间，可用于回退后终审"}, Facility: "碳捕集装置合规运行区域3", Owner: "质量复核组",
+			Category: "复核", RiskLevel: "high", MetricValue: 34.0, MetricUnit: "score",
+			EffectiveAt: now.Add(48 * time.Hour), Evidence: "替代样本已验证，装置与 ES-003 一致", RelatedCode: "REL-514-03"},
+
+		// Negative candidate: verified but from another unit, must be rejected.
+		{BaseModel: model.BaseModel{Code: "ES-005", Name: "跨装置排放样本", Status: "verified", Version: 1,
+			Description: "不同装置的样本，不能作为 CD-003 的替代样本"}, Facility: "碳捕集装置合规运行区域1", Owner: "运行一组",
+			Category: "常规", RiskLevel: "medium", MetricValue: 15.0, MetricUnit: "unit",
+			EffectiveAt: now.Add(48 * time.Hour), Evidence: "装置不匹配", RelatedCode: "REL-514-01"},
 	}
 	return db.WithContext(ctx).Create(&items).Error
 }
@@ -227,7 +242,22 @@ func seedComplianceDecision(ctx context.Context, db *gorm.DB) error {
 			EffectiveAt: now.Add(6 * time.Hour), Evidence: "已完成基础证据核对", RelatedCode: "REL-514-03"},
 	}
 	return db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Omit("Revisions").Create(&items).Error; err != nil {
+		// Bind seeded decisions to their matching samples so the sample page
+		// and rollback cascade have real links from the first start.
+		sampleIDByCode := make(map[string]*uint)
+		var samples []model.EmissionSample
+		if err := tx.Find(&samples).Error; err != nil {
+			return err
+		}
+		for index := range samples {
+			code := samples[index].Code
+			id := samples[index].ID
+			sampleIDByCode[code] = &id
+		}
+		items[0].SampleID = sampleIDByCode["ES-001"]
+		items[1].SampleID = sampleIDByCode["ES-002"]
+		items[2].SampleID = sampleIDByCode["ES-003"]
+		if err := tx.Omit("Revisions", "Rollbacks").Create(&items).Error; err != nil {
 			return err
 		}
 		revisions := make([]model.DecisionRevision, 0, len(items))
