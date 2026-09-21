@@ -17,6 +17,7 @@ type CreateEmissionSample struct {
 	EffectiveAt time.Time `json:"effectiveAt" binding:"required"`
 	Evidence    string    `json:"evidence" binding:"max=2000"`
 	RelatedCode string    `json:"relatedCode" binding:"max=64"`
+	UnitCode    string    `json:"unitCode" binding:"required,min=2,max=64"`
 }
 
 type UpdateEmissionSample struct {
@@ -32,4 +33,11 @@ type UpdateEmissionSample struct {
 	EffectiveAt     time.Time `json:"effectiveAt" binding:"required"`
 	Evidence        string    `json:"evidence" binding:"max=2000"`
 	RelatedCode     string    `json:"relatedCode" binding:"max=64"`
+	UnitCode        string    `json:"unitCode" binding:"required,min=2,max=64"`
+}
+
+// VoidSampleRequest invalidates an emission sample. The reason is frozen on the
+// sample and propagated to every rolled-back compliance decision.
+type VoidSampleRequest struct {
+	Reason string `json:"reason" binding:"required,min=3,max=500"`
 }

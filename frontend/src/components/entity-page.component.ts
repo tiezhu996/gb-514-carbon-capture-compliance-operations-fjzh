@@ -1,23 +1,26 @@
 import { AsyncPipe, CommonModule } from '@angular/common';
-import { ChangeDetectorRef, Component, Input, OnInit } from '@angular/core';
+import { ChangeDetectorRef, Component, Input, OnDestroy, OnInit } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { MatButtonModule } from '@angular/material/button';
 import { MatInputModule } from '@angular/material/input';
 import { authState } from '../hooks/use-auth';
 import type { EntityStore } from '../stores/factory';
 import type { DomainRecord, EntityConfig } from '../types/domain';
+import { statusLabel } from '../types/status';
 import { formatDate, nextStatus } from '../utils/format';
 import { ConfirmDialogComponent } from './common/confirm-dialog.component';
 import { ComplianceBadgeComponent } from './common/compliance-badge.component';
 import { EvidenceListComponent } from './common/evidence-list.component';
 import { MetricCardComponent } from './common/metric-card.component';
+import { RollbackChainComponent } from './common/rollback-chain.component';
 import { RuleDiffComponent } from './common/rule-diff.component';
+import { SampleRollbackComponent } from './common/sample-rollback.component';
 import { StatusBadgeComponent } from './common/status-badge.component';
 
 @Component({
   selector: 'app-entity-page',
   standalone: true,
-  imports: [CommonModule, AsyncPipe, FormsModule, MatButtonModule, MatInputModule, StatusBadgeComponent, MetricCardComponent, ConfirmDialogComponent, EvidenceListComponent, ComplianceBadgeComponent, RuleDiffComponent],
+  imports: [CommonModule, AsyncPipe, FormsModule, MatButtonModule, MatInputModule, StatusBadgeComponent, MetricCardComponent, ConfirmDialogComponent, EvidenceListComponent, ComplianceBadgeComponent, RuleDiffComponent, RollbackChainComponent, SampleRollbackComponent],
   template: `<main class="workspace" *ngIf="store.state$ | async as state">
     <header class="page-header">
       <div><p class="eyebrow">业务工作台</p><h1>{{ config.label }}</h1><p>统一管理{{ config.label }}的状态、风险、证据与责任人。</p></div>
@@ -37,10 +40,21 @@ import { StatusBadgeComponent } from './common/status-badge.component';
       <button mat-button (click)="reset()">重置</button>
     </section>
     <div *ngIf="state.error" class="alert">{{ state.error }}</div>
-    <section class="table-shell"><table><thead><tr><th>编码</th><th>名称</th><th>状态</th><th>风险</th><th>责任人</th><th>指标</th><th>更新时间</th><th>操作</th></tr></thead>
-      <tbody><tr *ngFor="let item of state.items"><td><strong>{{ item.code }}</strong></td><td>{{ item.name }}<small>{{ item.facility }}</small></td><td><app-status-badge [status]="item.status"/></td><td>{{ item.riskLevel }}</td><td>{{ item.owner }}</td><td>{{ item.metricValue }} {{ item.metricUnit }}</td><td>{{ formatDate(item.updatedAt) }}</td><td>
-        <button *ngIf="canTransition(item)" class="table-action" (click)="openTransition(item, next(item)!)">推进至 {{ next(item) }}</button>
-        <span *ngIf="!canTransition(item)" class="muted">{{ actionHint(item) }}</span>
+    <section class="table-shell"><table><thead><tr><th>编码</th><th>名称</th><th>状态</th><th>风险</th><th>责任人</th><th>指标</th><th>更新时间</th><th>操作 / 回退链路</th></tr></thead>
+      <tbody><tr *ngFor="let item of state.items"><td><strong>{{ item.code }}</strong><small *ngIf="item.unitCode">装置 {{ item.unitCode }}<ng-container *ngIf="item.sampleCode"> · 样本 {{ item.sampleCode }}</ng-container></small></td><td>{{ item.name }}<small>{{ item.facility }}</small></td><td><app-status-badge [status]="item.status"/></td><td>{{ item.riskLevel }}</td><td>{{ item.owner }}</td><td>{{ item.metricValue }} {{ item.metricUnit }}</td><td>{{ formatDate(item.updatedAt) }}</td><td class="action-cell">
+        <ng-container *ngIf="config.path === 'decisions' && item.rollback">
+          <app-rollback-chain [record]="item"/>
+        </ng-container>
+        <ng-container *ngIf="config.path === 'samples'">
+          <app-sample-rollback [record]="item"/>
+        </ng-container>
+        <ng-container *ngIf="(config.path !== 'samples') && !(config.path === 'decisions' && item.rollback)">
+          <button *ngIf="canTransition(item)" class="table-action" (click)="openTransition(item, next(item)!)">推进至 {{ statusLabelText(next(item)!) }}</button>
+          <span *ngIf="!canTransition(item)" class="muted">{{ actionHint(item) }}</span>
+        </ng-container>
+        <ng-container *ngIf="config.path === 'samples' && item.status !== 'invalid'">
+          <button *ngIf="canTransition(item)" class="table-action table-action--secondary" (click)="openTransition(item, next(item)!)">推进至 {{ statusLabelText(next(item)!) }}</button>
+        </ng-container>
       </td></tr><tr *ngIf="!state.items.length && !state.loading"><td colspan="8" class="empty">暂无记录</td></tr></tbody></table>
       <div *ngIf="state.loading" class="loading">正在同步业务数据…</div>
     </section>
@@ -48,7 +62,7 @@ import { StatusBadgeComponent } from './common/status-badge.component';
     <app-confirm-dialog [open]="!!pending" title="确认状态迁移" (cancel)="closeTransition()" (confirm)="confirmTransition()"><p>状态迁移会追加不可变版本并记录证据、操作者与请求 ID。</p><strong>{{ pending?.item?.status }} → {{ pending?.status }}</strong></app-confirm-dialog>
   </main>`,
 })
-export class EntityPageComponent implements OnInit {
+export class EntityPageComponent implements OnInit, OnDestroy {
   @Input({ required: true }) config!: EntityConfig;
   @Input({ required: true }) store!: EntityStore;
   search = '';
@@ -57,8 +71,24 @@ export class EntityPageComponent implements OnInit {
   readonly formatDate = formatDate;
 
   constructor(private readonly changeDetector: ChangeDetectorRef) {}
-  async ngOnInit() { await this.load(); }
-  next(item: DomainRecord) { return nextStatus(item.status, this.config.statuses); }
+  async ngOnInit() {
+    await this.load();
+    // Re-read after a void or finalize so the rollback chain and substitute
+    // are reflected from persisted state (refresh-safe).
+    window.addEventListener('rollback-changed', this.onRollbackChanged);
+  }
+  private onRollbackChanged = () => { void this.store.reload(this.config.path).then(() => this.changeDetector.detectChanges()); };
+  ngOnDestroy() { window.removeEventListener('rollback-changed', this.onRollbackChanged); }
+  next(item: DomainRecord) {
+    const target = nextStatus(item.status, this.config.statuses);
+    if (!target) return null;
+    // Samples reach "invalid" only via the dedicated 作废 action, and
+    // review_required decisions are finalized via substitute review, never the
+    // generic advance button.
+    if (target === 'invalid' || item.status === 'review_required') return null;
+    return target;
+  }
+  statusLabelText(status: string) { return statusLabel(status); }
   canWrite() { return authState.hasMinimumRole('operator'); }
   canReview() { return authState.hasMinimumRole('reviewer'); }
   canTransition(item: DomainRecord): boolean {
@@ -69,6 +99,7 @@ export class EntityPageComponent implements OnInit {
   }
   actionHint(item: DomainRecord): string {
     if (!this.canWrite()) return '只读权限';
+    if (this.config.path === 'decisions' && item.status === 'review_required') return '等待替代样本终审';
     const target = this.next(item);
     if (this.config.path === 'decisions' && target && ['accepted', 'escalated'].includes(target) && !this.canReview()) return '等待复核员决定';
     return '流程结束';
@@ -90,6 +121,7 @@ export class EntityPageComponent implements OnInit {
         description: '通过前端工作台创建的业务记录', facility: '默认作业区', owner: '现场操作员',
         category: '常规', riskLevel: 'medium', metricValue: 25, metricUnit: 'unit',
         effectiveAt: new Date().toISOString(), evidence: '已完成创建前检查', relatedCode: '',
+        unitCode: 'CU-DEMO',
       });
 	  this.search = '';
       this.showCreate = false;

@@ -29,7 +29,7 @@ docker compose down -v --remove-orphans
 | 捕集装置 | `CaptureUnit` | `/api/units` | standby, running, limited, stopped |
 | 许可规则 | `PermitRule` | `/api/rules` | draft, active, superseded, retired |
 | 排放样本 | `EmissionSample` | `/api/samples` | collected, testing, verified, invalid |
-| 合规决定 | `ComplianceDecision` | `/api/decisions` | draft, review, accepted, escalated |
+| 合规决定 | `ComplianceDecision` | `/api/decisions` | draft, review, accepted, escalated, review_required |
 
 - JWT 登录和 viewer/operator/reviewer/admin 四级 RBAC；写操作至少需要 operator，删除仅 admin，审计至少 reviewer。
 - 合规决定每次创建、草稿修改和状态迁移都会事务追加不可变版本，保存状态、证据、操作者和 request ID；进入 review 后业务字段锁定，accepted/escalated 仅 reviewer 或 admin 可执行。
@@ -48,6 +48,21 @@ docker compose down -v --remove-orphans
 | draft → review | operator/reviewer/admin | 追加复核版本，禁止跳过 review |
 | review → accepted/escalated | reviewer/admin | 追加最终决定版本；operator 会被拒绝 |
 | review 后修改字段 | 无 | 返回业务规则错误，历史与证据不可覆盖 |
+
+## 排放样本作废与决定回退复核
+
+排放样本作废后，引用该样本的已接受（accepted）/已升级（escalated）合规决定立即停止生效并回退到 `review_required`，等待替代样本终审；原结论、证据快照与作废原因完整保留在不可变版本与回退链路中。
+
+| 操作 | 接口 | 允许角色 | 规则 |
+|---|---|---|---|
+| 作废样本 | `POST /api/samples/:id/void` | operator/reviewer/admin | 原子回退所有引用该样本的终审决定；重复作废返回业务错误且不改动任何记录或审计 |
+| 查看回退链路 | `GET /api/decisions/:id/rollback` | 已登录用户 | 返回原结论、原版本、作废样本、作废原因、时间与替代样本 |
+| 替代样本终审 | `POST /api/decisions/:id/finalize` | reviewer/admin | 仅可使用同装置（`unitCode`）、已验证（verified）且采样时间严格晚于作废时间的替代样本；operator 返回 403 |
+
+- 作废与回退、终审都在单数据库事务内完成；并发终审通过版本条件保证只有一个结果，更换已终审的替代样本被拒绝。
+- `invalid` 只能经由专用作废接口进入，普通状态迁移到 `invalid` 会被拒绝，避免绕过回退与审计。
+- 回退链路（`DecisionRollback`）与每个版本（`DecisionRevision`）均追加不可变审计：`void` / `rollback` / `finalize_rollback`，失败请求不写入记录或审计。
+- 决定页展示回退链路与替代样本；样本页展示受影响决定及终审状态；刷新页面后从持久化状态完整回读，原 RBAC 与流程不变。
 
 ## 技术栈
 
@@ -123,7 +138,7 @@ cd .. && docker compose config --quiet
 | 枚举 | 值 | 前后端出现位置 |
 |---|---|---|
 | `UnitState` | `standby, running, limited, stopped` | `backend/internal/constants/status.go`、`frontend/src/types/status.ts` |
-| `DecisionState` | `draft, review, accepted, escalated` | `backend/internal/constants/status.go`、`frontend/src/types/status.ts` |
+| `DecisionState` | `draft, review, accepted, escalated, review_required` | `backend/internal/constants/status.go`、`frontend/src/types/status.ts` |
 
 每个实体自己的完整迁移图同样位于 `backend/internal/constants/status.go`；页面使用的状态列表位于 `frontend/src/types/status.ts`。修改状态时必须同步两处并更新对应服务测试。
 

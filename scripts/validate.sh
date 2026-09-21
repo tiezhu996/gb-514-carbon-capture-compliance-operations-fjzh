@@ -53,7 +53,7 @@ viewer_audit_status=$(curl -sS -o /dev/null -w '%{http_code}' "http://127.0.0.1:
 [ "$viewer_audit_status" = "403" ]
 
 decision_code="DECISION-SMOKE-$(date +%s)"
-decision_payload=$(printf '{"code":"%s","name":"Versioned compliance decision","description":"Immutable evidence workflow validation","facility":"Capture Train A","owner":"operator","category":"emissions","riskLevel":"high","metricValue":31.5,"metricUnit":"ppm","effectiveAt":"%s","evidence":"Calibrated sample ES-SMOKE and permit PR-SMOKE","relatedCode":"PR-SMOKE"}' "$decision_code" "$now")
+decision_payload=$(printf '{"code":"%s","name":"Versioned compliance decision","description":"Immutable evidence workflow validation","facility":"Capture Train A","owner":"operator","category":"emissions","riskLevel":"high","metricValue":31.5,"metricUnit":"ppm","effectiveAt":"%s","evidence":"Calibrated sample ES-SMOKE and permit PR-SMOKE","relatedCode":"PR-SMOKE","unitCode":"CU-SMOKE","sampleCode":"ES-SMOKE"}' "$decision_code" "$now")
 decision=$(curl -fsS -X POST "http://127.0.0.1:${BACKEND_PORT}/api/decisions" -H "Authorization: Bearer $operator_token" -H 'Content-Type: application/json' -d "$decision_payload")
 decision_id=$(printf '%s' "$decision" | jq -er '.data.id')
 decision_version=$(printf '%s' "$decision" | jq -er '.data.version')
@@ -69,6 +69,45 @@ accepted=$(curl -fsS -X POST "http://127.0.0.1:${BACKEND_PORT}/api/decisions/$de
 printf '%s' "$accepted" | jq -e '.data.status == "accepted" and (.data.revisions | length) == 3 and .data.revisions[0].version == 1 and .data.revisions[1].version == 2 and .data.revisions[2].version == 3 and .data.revisions[2].actor == "reviewer" and (.data.revisions[2].requestId | length > 0)' >/dev/null
 curl -fsS "http://127.0.0.1:${BACKEND_PORT}/api/audits?page=1&pageSize=100" -H "Authorization: Bearer $token" | jq -e '.meta.total >= 2' >/dev/null
 curl -fsS "http://127.0.0.1:${BACKEND_PORT}/api/audit-summary?windowHours=24" -H "Authorization: Bearer $token" | jq -e '.data.total >= 2 and .data.transitions >= 1' >/dev/null
+
+# 排放样本作废 -> 已接受决定回退 review_required -> 替代样本终审
+void_sample_code="VOID-SAMPLE-$(date +%s)"
+void_sample_payload=$(printf '{"code":"%s","name":"Voidable emission sample","facility":"Capture Train A","owner":"operator","category":"emissions","riskLevel":"high","metricValue":30,"metricUnit":"ppm","effectiveAt":"%s","evidence":"pre-void lab report","relatedCode":"","unitCode":"CU-VOID"}' "$void_sample_code" "$now")"
+vs=$(curl -fsS -X POST "http://127.0.0.1:${BACKEND_PORT}/api/samples" -H "Authorization: Bearer $operator_token" -H 'Content-Type: application/json' -d "$void_sample_payload")
+vs_id=$(printf '%s' "$vs" | jq -er '.data.id'); vs_v=$(printf '%s' "$vs" | jq -er '.data.version')
+vs=$(curl -fsS -X POST "http://127.0.0.1:${BACKEND_PORT}/api/samples/$vs_id/transition" -H "Authorization: Bearer $operator_token" -H 'Content-Type: application/json' -d "$(printf '{"status":"testing","expectedVersion":%s","reason":"send to testing"}' "$vs_v")")
+vs_v=$(printf '%s' "$vs" | jq -er '.data.version')
+vs=$(curl -fsS -X POST "http://127.0.0.1:${BACKEND_PORT}/api/samples/$vs_id/transition" -H "Authorization: Bearer $operator_token" -H 'Content-Type: application/json' -d "$(printf '{"status":"verified","expectedVersion":%s,"reason":"verified before use"}' "$vs_v")")
+void_decision_code="VOID-DECISION-$(date +%s)"
+vd_payload=$(printf '{"code":"%s","name":"Decision citing voided sample","facility":"Capture Train A","owner":"operator","category":"emissions","riskLevel":"high","metricValue":30,"metricUnit":"ppm","effectiveAt":"%s","evidence":"cites voidable sample","relatedCode":"","unitCode":"CU-VOID","sampleCode":"%s"}' "$void_decision_code" "$now" "$void_sample_code")"
+vd=$(curl -fsS -X POST "http://127.0.0.1:${BACKEND_PORT}/api/decisions" -H "Authorization: Bearer $operator_token" -H 'Content-Type: application/json' -d "$vd_payload")
+vd_id=$(printf '%s' "$vd" | jq -er '.data.id'); vd_v=$(printf '%s' "$vd" | jq -er '.data.version')
+vd=$(curl -fsS -X POST "http://127.0.0.1:${BACKEND_PORT}/api/decisions/$vd_id/transition" -H "Authorization: Bearer $operator_token" -H 'Content-Type: application/json' -d "$(printf '{"status":"review","expectedVersion":%s,"reason":"ready for review"}' "$vd_v")")
+vd_v=$(printf '%s' "$vd" | jq -er '.data.version')
+vd=$(curl -fsS -X POST "http://127.0.0.1:${BACKEND_PORT}/api/decisions/$vd_id/transition" -H "Authorization: Bearer $reviewer_token" -H 'Content-Type: application/json' -d "$(printf '{"status":"accepted","expectedVersion":%s","reason":"accept citing sample"}' "$vd_v")")
+printf '%s' "$vd" | jq -e '.data.status == "accepted"' >/dev/null
+# 作废样本必须回退决定；重复作废必须 422 且不改动记录
+voided=$(curl -fsS -X POST "http://127.0.0.1:${BACKEND_PORT}/api/samples/$vs_id/void" -H "Authorization: Bearer $operator_token" -H 'Content-Type: application/json' -d '{"reason":"sampler calibration failed"}')
+printf '%s' "$voided" | jq -e '.data.status == "invalid" and (.data.voidedAt | length > 0) and (.data.affectedDecisions | length) == 1 and .data.affectedDecisions[0].decisionCode == $code and .data.affectedDecisions[0].previousState == "accepted"' --arg code "$void_decision_code" >/dev/null
+repeat_void_status=$(curl -sS -o /dev/null -w '%{http_code}' -X POST "http://127.0.0.1:${BACKEND_PORT}/api/samples/$vs_id/void" -H "Authorization: Bearer $operator_token" -H 'Content-Type: application/json' -d '{"reason":"repeated void"}')
+[ "$repeat_void_status" = "422" ]
+rolled=$(curl -fsS "http://127.0.0.1:${BACKEND_PORT}/api/decisions/$vd_id/rollback" -H "Authorization: Bearer $reviewer_token")
+printf '%s' "$rolled" | jq -e '.data.status == "review_required" and .data.rollback.voidedSampleCode == $code and .data.rollback.voidReason == "sampler calibration failed" and (.data.revisions[0].evidence | length > 0)' --arg code "$void_sample_code" >/dev/null
+# operator 不能终审
+op_finalize_status=$(curl -sS -o /dev/null -w '%{http_code}' -X POST "http://127.0.0.1:${BACKEND_PORT}/api/decisions/$vd_id/finalize" -H "Authorization: Bearer $operator_token" -H 'Content-Type: application/json' -d '{"substituteSampleId":1,"reason":"operator tries final review"}')
+[ "$op_finalize_status" = "403" ]
+# 同装置、已验证、采样晚于作废时间的替代样本终审
+sub_time=$(date -u -d '+2 hours' '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || date -u -v+2H '+%Y-%m-%dT%H:%M:%SZ')
+sub_code="SUB-SAMPLE-$(date +%s)"
+sub_payload=$(printf '{"code":"%s","name":"Eligible substitute sample","facility":"Capture Train A","owner":"reviewer","category":"emissions","riskLevel":"high","metricValue":28,"metricUnit":"ppm","effectiveAt":"%s","evidence":"post-void verified lab report","relatedCode":"","unitCode":"CU-VOID"}' "$sub_code" "$sub_time")
+ss=$(curl -fsS -X POST "http://127.0.0.1:${BACKEND_PORT}/api/samples" -H "Authorization: Bearer $operator_token" -H 'Content-Type: application/json' -d "$sub_payload")
+ss_id=$(printf '%s' "$ss" | jq -er '.data.id'); ss_v=$(printf '%s' "$ss" | jq -er '.data.version')
+ss=$(curl -fsS -X POST "http://127.0.0.1:${BACKEND_PORT}/api/samples/$ss_id/transition" -H "Authorization: Bearer $operator_token" -H 'Content-Type: application/json' -d "$(printf '{"status":"testing","expectedVersion":%s,"reason":"substitute testing"}' "$ss_v")")
+ss_v=$(printf '%s' "$ss" | jq -er '.data.version')
+ss=$(curl -fsS -X POST "http://127.0.0.1:${BACKEND_PORT}/api/samples/$ss_id/transition" -H "Authorization: Bearer $operator_token" -H 'Content-Type: application/json' -d "$(printf '{"status":"verified","expectedVersion":%s,"reason":"substitute verified"}' "$ss_v")")
+finalized=$(curl -fsS -X POST "http://127.0.0.1:${BACKEND_PORT}/api/decisions/$vd_id/finalize" -H "Authorization: Bearer $reviewer_token" -H 'Content-Type: application/json' -d "$(printf '{"substituteSampleId":%s,"reason":"substitute confirms compliance"}' "$ss_id")")
+printf '%s' "$finalized" | jq -e '.data.status == "accepted" and .data.sampleCode == $code and .data.rollback.substituteCode == $code and (.data.rollback.finalizedAt | length > 0)' --arg code "$sub_code" >/dev/null
+
 docker compose ps
 if [ "${KEEP_RUNNING:-0}" = "1" ]; then
   echo "KEEP_RUNNING=1: containers left running for browser validation"

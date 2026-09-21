@@ -15,6 +15,13 @@ export interface DomainRecord {
   effectiveAt: string;
   evidence: string;
   relatedCode: string;
+  unitCode?: string;
+  sampleCode?: string;
+  voidedAt?: string;
+  voidedReason?: string;
+  voidedBy?: string;
+  affectedDecisions?: AffectedDecision[];
+  rollback?: DecisionRollback;
   createdAt: string;
   updatedAt: string;
   revisions?: DecisionRevision[];
@@ -30,6 +37,38 @@ export interface DecisionRevision {
   actor: string;
   requestId: string;
   createdAt: string;
+}
+
+export interface DecisionRollback {
+  id: number;
+  complianceDecisionId: number;
+  voidedSampleId: number;
+  voidedSampleCode: string;
+  previousState: string;
+  previousVersion: number;
+  voidReason: string;
+  voidedAt: string;
+  rolledBackAt: string;
+  rolledBackBy: string;
+  substituteSampleId?: number;
+  substituteCode?: string;
+  finalState?: string;
+  finalReason?: string;
+  finalizedBy?: string;
+  finalizedRequestId?: string;
+  finalizedAt?: string;
+}
+
+export interface AffectedDecision {
+  decisionId: number;
+  decisionCode: string;
+  state: string;
+  previousState: string;
+  rollbackReason: string;
+  rolledBackAt: string;
+  substituteSampleId?: number;
+  substituteCode?: string;
+  finalizedAt?: string;
 }
 
 export interface PageMeta { page: number; pageSize: number; total: number }

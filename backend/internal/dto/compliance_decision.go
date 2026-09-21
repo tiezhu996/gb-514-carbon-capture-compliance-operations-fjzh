@@ -17,6 +17,8 @@ type CreateComplianceDecision struct {
 	EffectiveAt time.Time `json:"effectiveAt" binding:"required"`
 	Evidence    string    `json:"evidence" binding:"max=2000"`
 	RelatedCode string    `json:"relatedCode" binding:"max=64"`
+	UnitCode    string    `json:"unitCode" binding:"required,min=2,max=64"`
+	SampleCode  string    `json:"sampleCode" binding:"max=64"`
 }
 
 type UpdateComplianceDecision struct {
@@ -32,4 +34,14 @@ type UpdateComplianceDecision struct {
 	EffectiveAt     time.Time `json:"effectiveAt" binding:"required"`
 	Evidence        string    `json:"evidence" binding:"max=2000"`
 	RelatedCode     string    `json:"relatedCode" binding:"max=64"`
+	UnitCode        string    `json:"unitCode" binding:"required,min=2,max=64"`
+	SampleCode      string    `json:"sampleCode" binding:"max=64"`
+}
+
+// FinalizeRollbackRequest completes a rolled-back decision using one
+// substitute emission sample. The substitute must be verified, belong to the
+// same unit and have been sampled strictly after the original void timestamp.
+type FinalizeRollbackRequest struct {
+	SubstituteSampleID uint   `json:"substituteSampleId" binding:"required"`
+	Reason             string `json:"reason" binding:"required,min=3,max=500"`
 }

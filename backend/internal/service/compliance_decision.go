@@ -53,6 +53,8 @@ func (s *complianceDecisionService) Create(ctx context.Context, input dto.Create
 		MetricValue: input.MetricValue, MetricUnit: strings.TrimSpace(input.MetricUnit),
 		EffectiveAt: input.EffectiveAt.UTC(), Evidence: strings.TrimSpace(input.Evidence),
 		RelatedCode: strings.ToUpper(strings.TrimSpace(input.RelatedCode)),
+		UnitCode:    strings.ToUpper(strings.TrimSpace(input.UnitCode)),
+		SampleCode:  strings.ToUpper(strings.TrimSpace(input.SampleCode)),
 	}
 	revision := newDecisionRevision(item.Version, item.Status, item.Evidence, "created compliance decision", actor, requestID)
 	if err := s.repository.CreateWithRevision(ctx, &item, revision); err != nil {
@@ -84,6 +86,8 @@ func (s *complianceDecisionService) Update(ctx context.Context, id uint, input d
 	current.EffectiveAt = input.EffectiveAt.UTC()
 	current.Evidence = strings.TrimSpace(input.Evidence)
 	current.RelatedCode = strings.ToUpper(strings.TrimSpace(input.RelatedCode))
+	current.UnitCode = strings.ToUpper(strings.TrimSpace(input.UnitCode))
+	current.SampleCode = strings.ToUpper(strings.TrimSpace(input.SampleCode))
 	current.Version = input.ExpectedVersion + 1
 	current.UpdatedAt = time.Now().UTC()
 	revision := newDecisionRevision(current.Version, current.Status, current.Evidence, "updated draft decision fields", actor, requestID)
@@ -100,6 +104,11 @@ func (s *complianceDecisionService) Transition(ctx context.Context, id uint, inp
 		return model.ComplianceDecision{}, err
 	}
 	target := strings.TrimSpace(input.Status)
+	if target == string(constants.DecisionStateReviewRequired) || current.Status == string(constants.DecisionStateReviewRequired) {
+		// Rollback review is entered by sample voiding and left only by a
+		// substitute-sample final review, never by the generic transition.
+		return model.ComplianceDecision{}, ErrRollbackReviewOnly
+	}
 	if !constants.CanTransition(constants.ComplianceDecisionTransitions, current.Status, target) {
 		return model.ComplianceDecision{}, fmt.Errorf("%w: %s -> %s", ErrInvalidTransition, current.Status, target)
 	}

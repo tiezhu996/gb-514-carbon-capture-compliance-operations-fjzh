@@ -32,14 +32,17 @@ func New(cfg config.Config, db *gorm.DB, redisClient *redis.Client, logger *slog
 	permitRuleRepository := repository.NewPermitRuleRepository(db)
 	emissionSampleRepository := repository.NewEmissionSampleRepository(db)
 	complianceDecisionRepository := repository.NewComplianceDecisionRepository(db)
+	reviewRepository := repository.NewReviewRepository(db)
 	captureUnitService := service.NewCaptureUnitService(captureUnitRepository, securityService)
 	permitRuleService := service.NewPermitRuleService(permitRuleRepository, securityService)
-	emissionSampleService := service.NewEmissionSampleService(emissionSampleRepository, securityService)
+	emissionSampleService := service.NewEmissionSampleService(emissionSampleRepository, reviewRepository, securityService)
 	complianceDecisionService := service.NewComplianceDecisionService(complianceDecisionRepository, securityService)
+	reviewService := service.NewReviewService(reviewRepository)
 	captureUnitHandler := handler.NewCaptureUnitHandler(captureUnitService)
 	permitRuleHandler := handler.NewPermitRuleHandler(permitRuleService)
 	emissionSampleHandler := handler.NewEmissionSampleHandler(emissionSampleService)
 	complianceDecisionHandler := handler.NewComplianceDecisionHandler(complianceDecisionService)
+	reviewHandler := handler.NewReviewHandler(emissionSampleService, reviewService)
 	systemHandler := handler.NewSystemHandler(securityService, captureUnitService, permitRuleService, emissionSampleService, complianceDecisionService, db, redisClient)
 
 	engine.GET("/healthz", systemHandler.Health)
@@ -58,6 +61,7 @@ func New(cfg config.Config, db *gorm.DB, redisClient *redis.Client, logger *slog
 	permitRuleHandler.Register(api)
 	emissionSampleHandler.Register(api)
 	complianceDecisionHandler.Register(api)
+	reviewHandler.Register(api)
 
 	engine.NoRoute(func(c *gin.Context) {
 		if c.Request.Method == http.MethodOptions {

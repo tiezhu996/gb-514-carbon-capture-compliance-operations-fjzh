@@ -11,6 +11,13 @@ import (
 
 var ErrVersionConflict = errors.New("record was changed by another request")
 
+// Rollback-flow sentinels returned by the review repository transactions.
+var (
+	ErrSampleAlreadyVoided = errors.New("emission sample is already voided")
+	ErrRollbackFinalized   = errors.New("the rollback was already finalized and its substitute cannot be replaced")
+	ErrSubstituteInvalid   = errors.New("substitute sample must be verified, from the same unit and sampled after the void timestamp")
+)
+
 type Page[T any] struct {
 	Items    []T   `json:"items"`
 	Total    int64 `json:"total"`

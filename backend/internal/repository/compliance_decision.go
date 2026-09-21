@@ -41,20 +41,36 @@ func (r *complianceDecisionRepository) List(ctx context.Context, q dto.PageQuery
 		Order("version ASC").Find(&revisions).Error; err != nil {
 		return Page[model.ComplianceDecision]{}, err
 	}
+	var rollbacks []model.DecisionRollback
+	if err := r.db.WithContext(ctx).Where("compliance_decision_id IN ?", ids).
+		Find(&rollbacks).Error; err != nil {
+		return Page[model.ComplianceDecision]{}, err
+	}
 	byDecision := make(map[uint][]model.DecisionRevision)
 	for _, revision := range revisions {
 		byDecision[revision.ComplianceDecisionID] = append(byDecision[revision.ComplianceDecisionID], revision)
 	}
+	rollbackByDecision := make(map[uint]model.DecisionRollback)
+	for _, rollback := range rollbacks {
+		rollbackByDecision[rollback.ComplianceDecisionID] = rollback
+	}
 	for index := range page.Items {
 		page.Items[index].Revisions = byDecision[page.Items[index].ID]
+		if rollback, ok := rollbackByDecision[page.Items[index].ID]; ok {
+			rollbackCopy := rollback
+			page.Items[index].Rollback = &rollbackCopy
+		}
 	}
 	return page, nil
 }
 func (r *complianceDecisionRepository) Get(ctx context.Context, id uint) (model.ComplianceDecision, error) {
 	var item model.ComplianceDecision
-	err := r.db.WithContext(ctx).Preload("Revisions", func(db *gorm.DB) *gorm.DB {
-		return db.Order("version ASC")
-	}).First(&item, id).Error
+	err := r.db.WithContext(ctx).
+		Preload("Revisions", func(db *gorm.DB) *gorm.DB {
+			return db.Order("version ASC")
+		}).
+		Preload("Rollback").
+		First(&item, id).Error
 	return item, err
 }
 func (r *complianceDecisionRepository) CreateWithRevision(ctx context.Context, item *model.ComplianceDecision, revision *model.DecisionRevision) error {
